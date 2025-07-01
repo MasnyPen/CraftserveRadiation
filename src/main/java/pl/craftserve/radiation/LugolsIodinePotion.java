@@ -102,15 +102,6 @@ public class LugolsIodinePotion implements Listener, Predicate<ItemStack> {
         this.plugin.getServer().getPluginManager().registerEvents(this, this.plugin);
     }
 
-    public void disable(RadiationNmsBridge nmsBridge) {
-        Objects.requireNonNull(nmsBridge, "nmsBridge");
-
-        HandlerList.unregisterAll(this);
-        if (this.config.recipe().enabled()) {
-            nmsBridge.unregisterLugolsIodinePotion(this.recipeKey);
-        }
-    }
-
     public Duration getDuration() {
         return this.config.duration();
     }

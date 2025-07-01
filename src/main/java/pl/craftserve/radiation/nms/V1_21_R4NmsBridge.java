@@ -1,5 +1,7 @@
 package pl.craftserve.radiation.nms;
 
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.MinecraftKey;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
@@ -9,16 +11,12 @@ import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.util.HashMap;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Objects;
-import java.util.UUID;
+import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public class V1_19_R2NmsBridge implements RadiationNmsBridge {
-    static final Logger logger = Logger.getLogger(V1_19_R2NmsBridge.class.getName());
+public class V1_21_R4NmsBridge implements RadiationNmsBridge {
+    static final Logger logger = Logger.getLogger(V1_21_R4NmsBridge.class.getName());
 
     private final Class<?> itemClass;
     private final Class<?> iRegistryClass;
@@ -37,8 +35,7 @@ public class V1_19_R2NmsBridge implements RadiationNmsBridge {
 
     private final Map<UUID, Integer> minWorldHeightMap = new HashMap<>();
 
-    public V1_19_R2NmsBridge(String version) {
-        Objects.requireNonNull(version, "version");
+    public V1_21_R4NmsBridge(String version) {
 
         try {
             this.itemClass = Class.forName("net.minecraft.world.item.Item"); // Item -> Item
@@ -50,7 +47,7 @@ public class V1_19_R2NmsBridge implements RadiationNmsBridge {
             Class<?> registryMaterialsClass = Class.forName("net.minecraft.core.RegistryMaterials"); // RegistryMaterials -> MappedRegistry
             this.isRegistryMaterialsFrozen = registryMaterialsClass.getDeclaredField("l"); // l -> frozen
 
-            Class<?> craftMagicNumbers = Class.forName("org.bukkit.craftbukkit." + version + ".util.CraftMagicNumbers");
+            Class<?> craftMagicNumbers = Class.forName("org.bukkit.craftbukkit.v1_21_R4.util.CraftMagicNumbers");
             this.getItem = craftMagicNumbers.getMethod("getItem", Material.class);
             this.minHeightMethod = Class.forName("org.bukkit.generator.WorldInfo").getMethod("getMinHeight");
 
@@ -61,7 +58,7 @@ public class V1_19_R2NmsBridge implements RadiationNmsBridge {
 
             this.getPotion = this.potionRegistry.getClass().getMethod("a", minecraftKey); // a -> get
         } catch (Exception e) {
-            throw new RuntimeException("Failed to initialize 1.19.3 bridge", e);
+            throw new RuntimeException("Failed to initialize 1.21.5 bridge", e);
         }
     }
 
@@ -72,8 +69,12 @@ public class V1_19_R2NmsBridge implements RadiationNmsBridge {
 
         try {
             String basePotionName = config.basePotion().name().toLowerCase(Locale.ROOT);
-            Object basePotion = this.getPotion.invoke(this.potionRegistry, this.newMinecraftKey.invoke(null, basePotionName));
+
+            String keyName = "minecraft:" + basePotionName;
+            Object key = this.newMinecraftKey.invoke(null, keyName);
+            Object basePotion = this.getPotion.invoke(this.potionRegistry, key);
             Objects.requireNonNull(basePotion, "basePotion not found");
+
 
             Object ingredient = this.getItem.invoke(null, config.ingredient());
             Objects.requireNonNull(ingredient, "ingredient not found");
