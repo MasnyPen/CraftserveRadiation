@@ -7,10 +7,7 @@ import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import pl.craftserve.radiation.LugolsIodinePotion;
 
-import java.lang.reflect.Array;
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
+import java.lang.reflect.*;
 import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -18,11 +15,12 @@ import java.util.logging.Logger;
 public class V1_21_R4NmsBridge implements RadiationNmsBridge {
     static final Logger logger = Logger.getLogger(V1_21_R4NmsBridge.class.getName());
 
-    private final Class<?> itemClass;
     private final Class<?> iRegistryClass;
     private final Class<?> mobEffectClass;
     private final Class<?> potionRegistryClass;
-    private final Class<?> potionBrewerClass;
+    private final Class<?> holderClass;
+    private final Class<?> recipeItemStackClass;
+    private final Class<?> iMaterialClass;
 
     private final Field isRegistryMaterialsFrozen;
 
@@ -32,31 +30,35 @@ public class V1_21_R4NmsBridge implements RadiationNmsBridge {
     private final Method minHeightMethod;
 
     private final Object potionRegistry;
+    private final Object potionBrewer;
 
     private final Map<UUID, Integer> minWorldHeightMap = new HashMap<>();
 
     public V1_21_R4NmsBridge(String version) {
-
         try {
-            this.itemClass = Class.forName("net.minecraft.world.item.Item"); // Item -> Item
             this.iRegistryClass = Class.forName("net.minecraft.core.IRegistry"); // IRegistry -> Registry
             this.mobEffectClass = Class.forName("net.minecraft.world.effect.MobEffect"); // MobEffect -> MobEffectInstance
             this.potionRegistryClass = Class.forName("net.minecraft.world.item.alchemy.PotionRegistry"); // PotionRegistry -> Potion
-            this.potionBrewerClass = Class.forName("net.minecraft.world.item.alchemy.PotionBrewer"); // PotionBrewer -> PotionBrewing
+            this.holderClass = Class.forName("net.minecraft.core.Holder");
+            this.iMaterialClass = Class.forName("net.minecraft.world.level.IMaterial");
+            this.recipeItemStackClass = Class.forName("net.minecraft.world.item.crafting.RecipeItemStack");
 
             Class<?> registryMaterialsClass = Class.forName("net.minecraft.core.RegistryMaterials"); // RegistryMaterials -> MappedRegistry
             this.isRegistryMaterialsFrozen = registryMaterialsClass.getDeclaredField("l"); // l -> frozen
 
-            Class<?> craftMagicNumbers = Class.forName("org.bukkit.craftbukkit.v1_21_R4.util.CraftMagicNumbers");
-            this.getItem = craftMagicNumbers.getMethod("getItem", Material.class);
-            this.minHeightMethod = Class.forName("org.bukkit.generator.WorldInfo").getMethod("getMinHeight");
+            Class<?> potionBrewerClass = Class.forName("net.minecraft.world.item.alchemy.PotionBrewer"); // PotionBrewer -> PotionBrewing
+            this.potionBrewer = potionBrewerClass.getDeclaredField("b").get(null); // Static instance of PotionBrewer
 
             Class<?> minecraftKey = Class.forName("net.minecraft.resources.MinecraftKey"); // MinecraftKey -> ResourceLocation
             this.newMinecraftKey = minecraftKey.getMethod("a", String.class); // a -> tryParse
-            Class<?> builtInRegistries = Class.forName("net.minecraft.core.registries.BuiltInRegistries"); // RegistryGeneration -> BuiltInRegistries
-            this.potionRegistry = builtInRegistries.getDeclaredField("j").get(null); // j -> POTION
 
+            Class<?> builtInRegistries = Class.forName("net.minecraft.core.registries.BuiltInRegistries"); // RegistryGeneration -> BuiltInRegistries
+            this.potionRegistry = builtInRegistries.getDeclaredField("h").get(null); // h -> POTION
             this.getPotion = this.potionRegistry.getClass().getMethod("a", minecraftKey); // a -> get
+
+            Class<?> craftMagicNumbers = Class.forName("org.bukkit.craftbukkit.v1_21_R4.util.CraftMagicNumbers");
+            this.getItem = craftMagicNumbers.getMethod("getItem", Material.class);
+            this.minHeightMethod = Class.forName("org.bukkit.generator.WorldInfo").getMethod("getMinHeight");
         } catch (Exception e) {
             throw new RuntimeException("Failed to initialize 1.21.5 bridge", e);
         }
@@ -80,16 +82,35 @@ public class V1_21_R4NmsBridge implements RadiationNmsBridge {
             Objects.requireNonNull(ingredient, "ingredient not found");
 
             Object mobEffectArray = Array.newInstance(this.mobEffectClass, 0);
-            Object newPotion = this.potionRegistryClass.getConstructor(mobEffectArray.getClass()).newInstance(mobEffectArray);
+            Object newPotion = this.potionRegistryClass.getConstructor(basePotionName.getClass(), mobEffectArray.getClass()).newInstance(basePotionName, mobEffectArray);
 
             Method registerMethod = this.iRegistryClass.getDeclaredMethod("a", this.iRegistryClass, String.class, Object.class); // a -> register
             this.isRegistryMaterialsFrozen.setAccessible(true);
             this.isRegistryMaterialsFrozen.set(this.potionRegistry, false);
             Object potion = registerMethod.invoke(null, this.potionRegistry, potionKey.getKey(), newPotion);
 
-            Method registerBrewingRecipe = this.potionBrewerClass.getDeclaredMethod("a", this.potionRegistryClass, this.itemClass, this.potionRegistryClass); // a -> addMix
-            registerBrewingRecipe.setAccessible(true);
-            registerBrewingRecipe.invoke(null, basePotion, ingredient, potion);
+            Method wrapAsHolder = this.iRegistryClass.getDeclaredMethod("e", Object.class); // e -> wrapAsHolder
+            Object basePotionHolder = wrapAsHolder.invoke(this.potionRegistry, basePotion); // Get Potion Holder for base potion
+            Object potionHolder = wrapAsHolder.invoke(this.potionRegistry, potion); // Get Potion Holder for new potion
+
+            Field mixes = this.potionBrewer.getClass().getDeclaredField("d"); // d -> potionMixes
+            mixes.setAccessible(true);
+
+            List<?> originalList = (List<?>) mixes.get(this.potionBrewer); // Get mixes from potion brewer
+            List<Object> modifiableList = new ArrayList<>(originalList); // Turn mixes into modifiable list
+
+            Method of = this.recipeItemStackClass.getDeclaredMethod("a", this.iMaterialClass); // a -> of
+            Object item =  of.invoke(null, ingredient); // Create RecipeItemStack
+
+            Class<?> predicatedClass = Class.forName("net.minecraft.world.item.alchemy.PotionBrewer$PredicatedCombination");
+            Constructor<?> constructor = predicatedClass.getDeclaredConstructor(this.holderClass, this.recipeItemStackClass, this.holderClass);
+            constructor.setAccessible(true);
+
+            Object newCombination = constructor.newInstance(basePotionHolder, item, potionHolder); // Create new PotionBrewer$PredicatedCombination
+
+            modifiableList.add(newCombination); // Add new combination to the mixes
+
+            mixes.set(this.potionBrewer, modifiableList); // Set new mix in PotionBrewer
         } catch (Exception e) {
             logger.log(Level.SEVERE, "Could not handle reflective operation.", e);
         }
